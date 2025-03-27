@@ -63,6 +63,10 @@ int laststate = LOW;
 int currentstate;
 int ledstate = LOW;
 
+// Voltage meter
+unsigned int raw=0;
+float volt=0.0;
+//-----------------
 
 void setup() {
   Serial.begin(9600);
@@ -116,6 +120,8 @@ void setup() {
     server.send(200, "text/plain", "Landing page!");
   });
 
+  server.on("/voltage", handleVoltage);
+
   Serial.println("mDNS responder started");
   MDNS.addService("http", "tcp", 80);
   
@@ -144,6 +150,9 @@ void setup() {
   FastLED.setBrightness(BRIGHTNESS);
 
   pinMode(sensor_pin,INPUT);
+
+  // Voltage meter
+  pinMode(A0, INPUT);
 }
 
 
@@ -160,6 +169,13 @@ void loop()
   MDNS.update();
   ElegantOTA.loop();
   
+  // ------------------------
+  raw = analogRead(A0);
+  volt = raw / 1023.0;
+  volt = volt * 4.495;
+  Serial.println("-------------");
+  Serial.println(volt);
+
   // ------------------------
   int currentstate = digitalRead(sensor_pin);
   if(laststate == LOW && currentstate == HIGH){
@@ -282,4 +298,10 @@ void onOTAEnd(bool success) {
   }
   // <Add your own code here>
 }
+
+void handleVoltage() {
+  String stringVoltage = String(volt, 3); // 3.141
+  server.send(200, "text/html", stringVoltage);
+}
+
 // --------------------------------------------------
