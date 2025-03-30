@@ -1,5 +1,8 @@
 #include <Arduino.h>
+
 #include "FastLED.h"
+#include <FastLED_GFX.h>
+
 #include <DNSServer.h>
 #include "NTPClient.h"
 #include <WiFiManager.h>
@@ -66,7 +69,22 @@ int ledstate = LOW;
 // Voltage meter
 unsigned int raw=0;
 float volt=0.0;
-//-----------------
+
+// -------------------------------------------------------
+#define CANVAS_WIDTH    8
+#define CANVAS_HEIGHT   8
+#define CHIPSET         WS2811
+#define NUM_LEDS        (CANVAS_WIDTH * CANVAS_HEIGHT)
+GFXcanvas canvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+// -------------------------------------------------------
+
+#define LONG_PRESS_TIME 2000 // holding time in (ms)
+
+unsigned long pressStartTime = 0;
+bool isLongPress = false;
+bool mode = 0; // 0 - effects, 1 - letters
+char currentLetter = 'A'; // start letter
+
 
 void setup() {
   Serial.begin(9600);
@@ -145,68 +163,104 @@ void setup() {
   // tell FastLED about the LED strip configuration
   FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
   //FastLED.addLeds<LED_TYPE,DATA_PIN,CLK_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  //--------------------------------------
 
   // set master brightness control
+  // FastLED.setBrightness(BRIGHTNESS);
+  // FastLED.clear(true);
+  // --------------------------------
+  
+  // FastLED.addLeds<CHIPSET, DATA_PIN, COLOR_ORDER>(canvas.getBuffer(), NUM_LEDS).setCorrection(TypicalLEDStrip);
   FastLED.setBrightness(BRIGHTNESS);
-
+  FastLED.clear(true);
+  canvas.setRotation(2);
+ 
+  //-------------------------------
   pinMode(sensor_pin,INPUT);
 
   // Voltage meter
   pinMode(A0, INPUT);
 }
 
-
+// ===========================================================
 // List of patterns to cycle through.  Each is defined as a separate function below.
 typedef void (*SimplePatternList[])();
 SimplePatternList gPatterns = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm };
 
 uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
 uint8_t gHue = 0; // rotating "base color" used by many of the patterns
-  
-void loop()
-{
+//========================================================
+
+void loop() {
   server.handleClient();
   MDNS.update();
   ElegantOTA.loop();
-  
-  // ------------------------
-  raw = analogRead(A0);
-  volt = raw / 1023.0;
-  volt = volt * 4.495;
-  Serial.println("-------------");
-  Serial.println(volt);
 
-  // ------------------------
+  raw = analogRead(A0);
+  volt = raw / 1023.0 * 4.495;
+
   int currentstate = digitalRead(sensor_pin);
-  if(laststate == LOW && currentstate == HIGH){
-    if(ledstate == LOW){
-      ledstate = HIGH;
-      Serial.println("ON");
-    }
-    else if(ledstate == HIGH){
-      ledstate = LOW;
-      turnOffLeds();
-      Serial.println("OFF");
+
+  // Определяем начало нажатия
+  if (currentstate == HIGH && laststate == LOW) {
+    pressStartTime = millis();
+    isLongPress = false;
+  }
+
+  // Проверяем, стало ли нажатие длительным
+  if (currentstate == HIGH && millis() - pressStartTime > LONG_PRESS_TIME) {
+    if (!isLongPress) {
+      mode = !mode; // Переключаем режим (эффекты ↔ буквы)
+      Serial.println(mode ? "Showing letters" : "Showing effects");
+      if (mode) {
+        FastLED.addLeds<CHIPSET, DATA_PIN, COLOR_ORDER>(canvas.getBuffer(), NUM_LEDS).setCorrection(TypicalLEDStrip);
+      } else {
+        FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+      }
+      isLongPress = true;
     }
   }
+
+  // Отпускание кнопки (конец нажатия)
+  if (currentstate == LOW && laststate == HIGH) {
+    if (!isLongPress) { // Если это было короткое нажатие
+      if (mode) { 
+        // В режиме букв - переключаем букву
+        currentLetter = (currentLetter == 'Z') ? 'A' : currentLetter + 1;
+        Serial.print("Next letter: ");
+        Serial.println(currentLetter);
+      } else { 
+        // В режиме эффектов - включаем/выключаем
+        ledstate = !ledstate;
+        Serial.println(ledstate ? "Effects ON" : "Effects OFF");
+        if (!ledstate) turnOffLeds();
+      }
+    }
+  }
+
   laststate = currentstate;
 
-  if(ledstate == HIGH) {
-    // Call the current pattern function once, updating the 'leds' array
-    gPatterns[gCurrentPatternNumber]();
-    // send the 'leds' array out to the actual LED strip
-    FastLED.show();
-    // insert a delay to keep the framerate modest
-    FastLED.delay(1000/FRAMES_PER_SECOND); 
-    // do some periodic updates
-    EVERY_N_MILLISECONDS( 20 ) { gHue++; } // slowly cycle the "base color" through the rainbow
-    EVERY_N_SECONDS( 10 ) { nextPattern(); } // change patterns periodically 
+  if (ledstate) {
+    if (!mode) {
+      // В режиме эффектов обновляем анимации
+      gPatterns[gCurrentPatternNumber]();
+      FastLED.show();
+      FastLED.delay(1000 / FRAMES_PER_SECOND);
+      EVERY_N_MILLISECONDS(20) { gHue++; }
+      EVERY_N_SECONDS(10) { nextPattern(); }
+    } else {
+      // В режиме букв показываем букву
+      canvas.fillScreen(CRGB::Black);
+      canvas.setTextSize(1);
+      canvas.setCursor(1, 1);
+      canvas.print(currentLetter);
+      FastLED.show();
+    }
   }
 }
 
 void turnOffLeds() {
-  fill_solid(leds, NUM_LEDS, CRGB::Black);
-  FastLED.show();
+  FastLED.clear(true);
 }
 
 #define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
