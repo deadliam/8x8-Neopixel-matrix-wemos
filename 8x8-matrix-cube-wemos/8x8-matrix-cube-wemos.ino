@@ -76,6 +76,13 @@ float volt=0.0;
 #define CHIPSET         WS2811
 #define NUM_LEDS        (CANVAS_WIDTH * CANVAS_HEIGHT)
 GFXcanvas canvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+
+// Define an array of colors
+CRGB colors[] = {CRGB::Red, CRGB::Green, CRGB::Blue, CRGB::Yellow, CRGB::Purple, CRGB::Cyan, CRGB::Orange};
+int colorIndex = 0; // Index for cycling through colors
+
+unsigned long lastScrollTime = 0;
+int scrollPos = CANVAS_WIDTH;
 // -------------------------------------------------------
 
 #define LONG_PRESS_TIME 2000 // holding time in (ms)
@@ -227,6 +234,9 @@ void loop() {
       if (mode) { 
         // В режиме букв - переключаем букву
         currentLetter = (currentLetter == 'Z') ? 'A' : currentLetter + 1;
+        
+        // Cycle to the next color for each new letter
+        colorIndex = (colorIndex + 1) % (sizeof(colors) / sizeof(colors[0]));
         Serial.print("Next letter: ");
         Serial.println(currentLetter);
       } else { 
@@ -253,9 +263,18 @@ void loop() {
       canvas.fillScreen(CRGB::Black);
       canvas.setTextSize(1);
       canvas.setCursor(1, 1);
+      canvas.setTextColor(colors[colorIndex]);
       canvas.print(currentLetter);
       FastLED.show();
     }
+  }
+  showLowPowerIndicator();
+}
+
+void showLowPowerIndicator() {
+  if (volt < 3.0) {
+    leds[63] = CRGB::Red;
+    FastLED.show();
   }
 }
 
