@@ -90,7 +90,7 @@ int scrollPos = CANVAS_WIDTH;
 unsigned long pressStartTime = 0;
 bool isLongPress = false;
 bool mode = 0; // 0 - effects, 1 - letters
-char currentLetter = 'A'; // start letter
+char currentLetter = 'A'; // start with letter A, will cycle through A-Z then 0-9
 
 
 void setup() {
@@ -234,7 +234,13 @@ void loop() {
     if (!isLongPress) { // Если это было короткое нажатие
       if (mode) { 
         // В режиме букв - переключаем букву
-        currentLetter = (currentLetter == 'Z') ? 'A' : currentLetter + 1;
+        if (currentLetter == 'Z') {
+          currentLetter = '0';
+        } else if (currentLetter == '9') {
+          currentLetter = 'A';
+        } else {
+          currentLetter = currentLetter + 1;
+        }
         
         // Cycle to the next color for each new letter
         colorIndex = (colorIndex + 1) % (sizeof(colors) / sizeof(colors[0]));
