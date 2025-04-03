@@ -192,7 +192,8 @@ void setup() {
 // ===========================================================
 // List of patterns to cycle through.  Each is defined as a separate function below.
 typedef void (*SimplePatternList[])();
-SimplePatternList gPatterns = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm };
+SimplePatternList gPatterns = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm, fire, cylon, meteor, twinkle, colorWaves, pulse, randomFlicker, sparkle };
+
 
 uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
 uint8_t gHue = 0; // rotating "base color" used by many of the patterns
@@ -345,6 +346,112 @@ void juggle() {
     leds[beatsin16(i+7,0,NUM_LEDS)] |= CHSV(dothue, 200, 255);
     dothue += 32;
   }
+}
+
+#define COOLING  60     // How quickly the fire cools down (higher = less flickering)
+#define SPARKING 100    // Chance of a new spark appearing at the bottom (higher = more flickering)
+#define NUM_SPARKS 3    // Number of random sparks at the bottom
+
+void fire() {
+  static byte heat[NUM_LEDS];
+
+  // Step 1: Cool down the heat of every cell slightly
+  for (int i = 0; i < NUM_LEDS; i++) {
+    heat[i] = qsub8(heat[i], random8(0, ((COOLING * 10) / NUM_LEDS) + 2));
+  }
+
+  // Step 2: Spread heat upward, making it look like flames moving up
+  for (int i = NUM_LEDS - 1; i >= 2; i--) {
+    heat[i] = (heat[i - 1] + heat[i - 2] + heat[i - 3]) / 3;
+  }
+
+  // Step 3: Randomly ignite new sparks at the bottom
+  for (int i = 0; i < NUM_SPARKS; i++) {
+    if (random8() < SPARKING) {
+      int pos = random8(3);  // Randomly pick one of the first few LEDs
+      heat[pos] = qadd8(heat[pos], random8(160, 255)); 
+    }
+  }
+
+  // Step 4: Map heat values to flame colors
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = HeatColor(heat[i]); 
+  }
+
+  FastLED.show();
+  delay(30);  // Control animation speed
+}
+
+void cylon() {
+  // A bouncing light similar to the Cylon eye or KITT from Knight Rider
+  static int pos = 0;
+  static int direction = 1;
+  fadeToBlackBy(leds, NUM_LEDS, 20);
+  leds[pos] = CHSV(gHue, 255, 255);
+  pos += direction;
+  if (pos == NUM_LEDS - 1 || pos == 0) direction = -direction;
+}
+
+void meteor() {
+  // A single bright pixel leaving a fading trail
+  fadeToBlackBy(leds, NUM_LEDS, 30);
+  int pos = beatsin16(15, 0, NUM_LEDS - 1);
+  leds[pos] += CHSV(gHue, 255, 255);
+}
+
+void twinkle() {
+  // Random twinkling stars effect
+  fadeToBlackBy(leds, NUM_LEDS, 10);
+  if (random8() < 50) {
+    int pos = random16(NUM_LEDS);
+    leds[pos] += CHSV(random8(), 200, 255);
+  }
+}
+
+void colorWaves() {
+  // Smooth color wave effect
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = CHSV(gHue + sin8(i * 10), 255, 255);
+  }
+}
+
+void pulse() {
+  static uint8_t pulseValue = 0;
+  static bool increasing = true;
+
+  if (increasing) {
+    pulseValue++;
+    if (pulseValue == 255) {
+      increasing = false;
+    }
+  } else {
+    pulseValue--;
+    if (pulseValue == 0) {
+      increasing = true;
+    }
+  }
+
+  fill_solid(leds, NUM_LEDS, CHSV(gHue, 255, pulseValue));
+}
+
+void randomFlicker() {
+  for (int i = 0; i < NUM_LEDS; i++) {
+    if (random8() < 30) {
+      leds[i] = CHSV(random8(), 255, random8(128, 255));
+    } else {
+      leds[i] = CRGB::Black;
+    }
+  }
+  FastLED.show();
+  delay(50);
+}
+
+void sparkle() {
+  fadeToBlackBy(leds, NUM_LEDS, 10);
+  int pos = random16(NUM_LEDS);
+  leds[pos] = CHSV(random8(), 255, 255);  // Sparkle with random color
+  FastLED.show();
+  delay(30);
 }
 
 // =================================================
