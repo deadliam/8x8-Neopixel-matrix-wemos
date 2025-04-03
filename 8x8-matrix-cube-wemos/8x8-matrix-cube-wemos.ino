@@ -192,7 +192,12 @@ void setup() {
 // ===========================================================
 // List of patterns to cycle through.  Each is defined as a separate function below.
 typedef void (*SimplePatternList[])();
-SimplePatternList gPatterns = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm, fire, cylon, meteor, twinkle, colorWaves, pulse, randomFlicker, sparkle };
+SimplePatternList gPatterns = { 
+  rainbow, rainbowWithGlitter, confetti, sinelon, 
+  juggle, bpm, fire, cylon, meteor, twinkle, 
+  colorWaves, pulse, randomFlicker, sparkle,
+  matrixRain, ripple, expandingSquares 
+};
 
 
 uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
@@ -458,6 +463,88 @@ void sparkle() {
   leds[pos] = CHSV(random8(), 255, 255);  // Sparkle with random color
   FastLED.show();
   delay(30);
+}
+
+uint16_t XY(uint8_t x, uint8_t y) {
+  return (y * 8) + x;
+}
+
+void matrixRain() {
+  // Matrix-style falling characters
+  fadeToBlackBy(leds, NUM_LEDS, 40);
+  
+  static byte drops[8] = {0,0,0,0,0,0,0,0};
+  static byte dropBrightness[8] = {0,0,0,0,0,0,0,0};
+  
+  // Move drops down and add new ones
+  for(int i = 0; i < 8; i++) {
+    if(drops[i] == 0 && random8() < 40) {
+      drops[i] = 1;
+      dropBrightness[i] = 255;
+    }
+    
+    if(drops[i] > 0 && drops[i] <= 8) {
+      leds[XY(i, drops[i]-1)] = CHSV(96, 255, dropBrightness[i]);
+      dropBrightness[i] = qadd8(dropBrightness[i], 10);
+      if(random8() < 30) {
+        drops[i]++;
+        if(drops[i] > 8) drops[i] = 0;
+      }
+    }
+  }
+}
+
+void ripple() {
+  static int center_x = 3;
+  static int center_y = 3;
+  static int wave = 0;
+  
+  fadeToBlackBy(leds, NUM_LEDS, 64);
+  
+  for(int x = 0; x < 8; x++) {
+    for(int y = 0; y < 8; y++) {
+      int distance = sqrt(pow(x - center_x, 2) + pow(y - center_y, 2));
+      if(distance == wave / 32) {
+        leds[XY(x, y)] = CHSV(gHue, 255, 255);
+      }
+    }
+  }
+  
+  wave += 8;
+  if(wave >= 256) {
+    wave = 0;
+    center_x = random8(1, 7);
+    center_y = random8(1, 7);
+  }
+}
+
+void expandingSquares() {
+  static int size = 0;
+  static int color = 0;
+  
+  fadeToBlackBy(leds, NUM_LEDS, 64);
+  
+  for(int x = 3-size; x <= 4+size; x++) {
+    if(x >= 0 && x < 8) {
+      if(3-size >= 0) leds[XY(x, 3-size)] = CHSV(color, 255, 255);
+      if(4+size < 8) leds[XY(x, 4+size)] = CHSV(color, 255, 255);
+    }
+  }
+  
+  for(int y = 3-size; y <= 4+size; y++) {
+    if(y >= 0 && y < 8) {
+      if(3-size >= 0) leds[XY(3-size, y)] = CHSV(color, 255, 255);
+      if(4+size < 8) leds[XY(4+size, y)] = CHSV(color, 255, 255);
+    }
+  }
+  
+  EVERY_N_MILLISECONDS(100) {
+    size++;
+    if(size >= 4) {
+      size = 0;
+      color = random8();
+    }
+  }
 }
 
 // =================================================
