@@ -72,11 +72,16 @@ int ledstate = LOW;
 unsigned int soundValue = 0;
 unsigned int soundIntensity = 0;
 unsigned int lastSoundIntensity = 0;
-const int SOUND_THRESHOLD = 10;
-const float SMOOTHING_FACTOR = 0.2; // Smoothing factor for sound intensity (0.0-1.0)
 unsigned int soundPeak = 0;
 const unsigned long PEAK_DECAY = 50; // Peak decay rate in milliseconds
 unsigned long lastPeakTime = 0;
+// -------------------------------------------------------
+// VUMeter
+int userSoundThreshold = 10;
+int userBrightness = 64;
+float userSmoothingFactor = 0.8;
+uint8_t userPatternMode = 0;
+
 // -------------------------------------------------------
 #define CANVAS_WIDTH    8
 #define CANVAS_HEIGHT   8
@@ -98,11 +103,59 @@ bool isLongPress = false;
 bool mode = 0; // 0 - effects, 1 - letters
 char currentLetter = 'A'; // start with letter A, will cycle through A-Z then 0-9
 
+// ===========================================================
+// List of patterns to cycle through.  Each is defined as a separate function below.
+typedef void (*SimplePatternList[])();
+
+// Прототипы функций эффектов (если они ниже по коду, обязательно нужны)
+void rainbow();
+void rainbowWithGlitter();
+void confetti();
+void sinelon();
+void juggle();
+void bpm();
+void fire();
+void cylon();
+void meteor();
+void twinkle();
+void colorWaves();
+void pulse();
+void randomFlicker();
+void sparkle();
+void matrixRain();
+void ripple();
+void expandingSquares();
+void vuMeterWrapper();
+
+// Объявляем и инициализируем массив паттернов
+void (*gPatterns[])() = {
+  rainbow, rainbowWithGlitter, confetti, sinelon, juggle, bpm, fire, cylon,
+  meteor, twinkle, colorWaves, pulse, randomFlicker, sparkle, matrixRain,
+  ripple, expandingSquares, vuMeterWrapper
+};
+
+uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
+uint8_t gHue = 0; // rotating "base color" used by many of the patterns
+//========================================================
+#include <EEPROM.h>
+
+struct UserSettings {
+  int brightness;
+  int soundThreshold;
+  float smoothingFactor;
+  int patternMode;
+};
+
+UserSettings settings;
+
+const int EEPROM_ADDR = 0;
+//========================================================
 
 void setup() {
   Serial.begin(9600);
   Serial.println();
   turnOffLeds();
+
   // ========================================================
   // WiFiManager
   // Local intialization. Once its business is done, there is no need to keep it around
@@ -151,6 +204,51 @@ void setup() {
     server.send(200, "text/plain", "Landing page!");
   });
 
+  server.on("/settings", HTTP_GET, []() {
+  String page = "<html><body><h2>Visualization Setup</h2>"
+                "<form method='POST'>"
+                "Sound threshold: <input type='number' name='threshold' value='" + String(userSoundThreshold) + "'><br>"
+                "Brightness: <input type='number' name='brightness' value='" + String(userBrightness) + "'><br>"
+                "Smoothing (0.0 - 1.0): <input type='text' name='smoothing' value='" + String(userSmoothingFactor, 2) + "'><br>"
+                "Pattern (0-" + String(ARRAY_SIZE(gPatterns) - 1) + "): <input type='number' name='pattern' value='" + String(userPatternMode) + "'><br>"
+                "<input type='submit' value='Save'>"
+                "</form></body></html>";
+  server.send(200, "text/html", page);
+  });
+
+  server.on("/settings", HTTP_POST, []() {
+    bool changed = false;
+
+    if (server.hasArg("threshold")) {
+      userSoundThreshold = server.arg("threshold").toInt();
+      settings.soundThreshold = userSoundThreshold;
+      changed = true;
+    }
+    if (server.hasArg("brightness")) {
+      userBrightness = server.arg("brightness").toInt();
+      settings.brightness = userBrightness;
+      changed = true;
+      Serial.println("userBrightness:");
+      Serial.println(userBrightness);
+    }
+    if (server.hasArg("smoothing")) {
+      userSmoothingFactor = server.arg("smoothing").toFloat();
+      settings.smoothingFactor = userSmoothingFactor;
+      changed = true;
+    }
+    if (server.hasArg("pattern")) {
+      userPatternMode = constrain(server.arg("pattern").toInt(), 0, ARRAY_SIZE(gPatterns) - 1);
+      settings.patternMode = userPatternMode;
+      changed = true;
+    }
+
+    if (changed) saveSettings();
+
+    server.sendHeader("Location", "/settings");
+    server.send(303);
+  });
+// ========================================================
+
   Serial.println("mDNS responder started");
   MDNS.addService("http", "tcp", 80);
   
@@ -191,22 +289,12 @@ void setup() {
 
   // Sound detection sensor
   pinMode(A0, INPUT);
+
+  //-------------------------------
+  EEPROM.begin(sizeof(UserSettings));
+  loadSettings();
 }
 
-// ===========================================================
-// List of patterns to cycle through.  Each is defined as a separate function below.
-typedef void (*SimplePatternList[])();
-SimplePatternList gPatterns = { 
-  rainbow, rainbowWithGlitter, confetti, sinelon, 
-  juggle, bpm, fire, cylon, meteor, twinkle, 
-  colorWaves, pulse, randomFlicker, sparkle,
-  matrixRain, ripple, expandingSquares, vuMeter 
-};
-
-
-uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
-uint8_t gHue = 0; // rotating "base color" used by many of the patterns
-//========================================================
 
 void loop() {
   server.handleClient();
@@ -229,7 +317,7 @@ void loop() {
   rawIntensity = max((unsigned int)rawIntensity, (soundPeak * 3) / 4);
   
   // Apply smoothing to prevent erratic pattern changes
-  soundIntensity = (SMOOTHING_FACTOR * rawIntensity) + ((1.0 - SMOOTHING_FACTOR) * lastSoundIntensity);
+  soundIntensity = (userSmoothingFactor * rawIntensity) + ((1.0 - userSmoothingFactor) * lastSoundIntensity);
   lastSoundIntensity = soundIntensity;
   int currentstate = digitalRead(sensor_pin);
 
@@ -285,7 +373,7 @@ void loop() {
     if (!mode) {
       // В режиме эффектов обновляем анимации
       // Select pattern based on sound intensity
-      if (soundIntensity > SOUND_THRESHOLD) {
+      if (soundIntensity > userSoundThreshold) {
         // For louder sounds, choose more active patterns
         if (soundIntensity > 200) {
             gCurrentPatternNumber = ARRAY_SIZE(gPatterns) - 1; // vuMeter
@@ -299,7 +387,7 @@ void loop() {
         
         // Adjust brightness based on sound intensity and peak
         int brightness = map(max(soundIntensity, soundPeak), 0, 255, 30, 255);
-        FastLED.setBrightness(brightness);
+        FastLED.setBrightness(map(max(soundIntensity, soundPeak), 0, 255, userBrightness, 255));
       }
       
       gPatterns[gCurrentPatternNumber]();
@@ -308,7 +396,7 @@ void loop() {
       EVERY_N_MILLISECONDS(20) { gHue++; }
       
       // Only auto-change patterns when there's no sound
-      if (soundIntensity <= SOUND_THRESHOLD) {
+      if (soundIntensity <= userSoundThreshold) {
         EVERY_N_SECONDS(10) { nextPattern(); }
       }
     } else {
@@ -362,23 +450,23 @@ void confetti()
   leds[pos] += CHSV( gHue + random8(64), 200, 255);
 }
 
-void sinelon()
+void sinelon() 
 {
-  // a colored dot sweeping back and forth, with fading trails
-  fadeToBlackBy( leds, NUM_LEDS, 20);
-  int pos = beatsin16(13,0,NUM_LEDS);
-  leds[pos] += CHSV( gHue, 255, 192);
+  fadeToBlackBy(leds, NUM_LEDS, 20);
+  int pos = beatsin16(13, 0, NUM_LEDS - 1);
+  leds[pos] += CHSV(gHue, 255, 192);
+  gHue++;
 }
 
 void bpm()
 {
-  // colored stripes pulsing at a defined Beats-Per-Minute (BPM)
   uint8_t BeatsPerMinute = 62;
   CRGBPalette16 palette = PartyColors_p;
-  uint8_t beat = beatsin8( BeatsPerMinute, 64, 255);
-  for( int i = 0; i < NUM_LEDS; i++) { //9948
-    leds[i] = ColorFromPalette(palette, gHue+(i*2), beat-gHue+(i*10));
+  uint8_t beat = beatsin8(BeatsPerMinute, 64, 255);
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = ColorFromPalette(palette, gHue + (i * 2), beat - gHue + (i * 10));
   }
+  gHue++;
 }
 
 void juggle() {
@@ -579,27 +667,64 @@ void expandingSquares() {
   }
 }
 
-void vuMeter() {
-  // Create a VU meter effect based on sound intensity
-  fadeToBlackBy(leds, NUM_LEDS, 60);
-  
-  // Calculate how many LEDs should be lit based on sound intensity
-  int ledsToLight = map(soundIntensity, 0, 255, 0, NUM_LEDS);
-  
-  // Create gradient effect
-  for(int i = 0; i < ledsToLight; i++) {
-    if(i < NUM_LEDS/3) {
-      // Green for lower levels
-      leds[i] = CRGB::Green;
-    } else if(i < (NUM_LEDS * 2/3)) {
-      // Yellow for medium levels
-      leds[i] = CRGB::Yellow;
+void vuMeterWrapper() {
+  vuMeter(leds, soundIntensity);
+}
+
+void vuMeter(CRGB* leds, int soundIntensity) {
+  const uint8_t NUM_COLUMNS = 8;
+  const uint8_t NUM_ROWS = 8;
+  const uint16_t LOCAL_NUM_LEDS = NUM_COLUMNS * NUM_ROWS;
+  static int columnHeight[NUM_COLUMNS] = {0};
+  static int peak[NUM_COLUMNS] = {0};
+  static unsigned long lastPeakUpdate[NUM_COLUMNS] = {0};
+
+  auto XY = [](uint8_t x, uint8_t y) -> uint16_t {
+    if (y % 2 == 0) {
+      return y * NUM_COLUMNS + x;  // Чётная строка — слева направо
     } else {
-      // Red for high levels
-      leds[i] = CRGB::Red;
+      return y * NUM_COLUMNS + (NUM_COLUMNS - 1 - x);  // Нечётная — справа налево
+    }
+  };
+
+  fadeToBlackBy(leds, LOCAL_NUM_LEDS, 40);  // Немного более заметное затухание
+
+  for (int x = 0; x < NUM_COLUMNS; x++) {
+    // Имитируем отдельный канал звука для каждого столбца
+    int simulatedValue = (soundIntensity * (random(80, 120))) / 100;
+    int height = map(simulatedValue, 0, 255, 0, NUM_ROWS);
+
+    if (height > columnHeight[x]) {
+      columnHeight[x] = height;
+      peak[x] = height;
+      lastPeakUpdate[x] = millis();
+    } else {
+      columnHeight[x] = max(0, columnHeight[x] - 1);
+      if (millis() - lastPeakUpdate[x] > 80 && peak[x] > 0) {
+        peak[x]--;
+        lastPeakUpdate[x] = millis();
+      }
+    }
+
+    // Рисуем столбик снизу вверх
+    for (int y = 0; y < columnHeight[x]; y++) {
+      int index = XY(x, NUM_ROWS - 1 - y);  // Снизу вверх
+      if (y < 3)
+        leds[index] = CRGB::Green;
+      else if (y < 6)
+        leds[index] = CRGB::Yellow;
+      else
+        leds[index] = CRGB::Red;
+    }
+
+    // Пик-индикатор
+    if (peak[x] > 0 && peak[x] < NUM_ROWS) {
+      int peakIndex = XY(x, NUM_ROWS - 1 - peak[x]);
+      leds[peakIndex] = CRGB::White;
     }
   }
 }
+
 
 // =================================================
 void onOTAStart() {
@@ -626,5 +751,28 @@ void onOTAEnd(bool success) {
   // <Add your own code here>
 }
 
+// --------------------------------------------------
+void saveSettings() {
+  EEPROM.put(EEPROM_ADDR, settings);
+  EEPROM.commit();
+}
 
+void loadSettings() {
+  EEPROM.get(EEPROM_ADDR, settings);
+
+  // Проверка адекватности (можно заменить на сигнатуру)
+  if (settings.brightness < 0 || settings.brightness > 255) {
+    settings.brightness = 64;
+    settings.soundThreshold = 30;
+    settings.smoothingFactor = 0.6;
+    settings.patternMode = 0;
+    saveSettings();
+  }
+
+  // Присваиваем значения глобальным переменным
+  userBrightness = settings.brightness;
+  userSoundThreshold = settings.soundThreshold;
+  userSmoothingFactor = settings.smoothingFactor;
+  userPatternMode = settings.patternMode;
+}
 // --------------------------------------------------
