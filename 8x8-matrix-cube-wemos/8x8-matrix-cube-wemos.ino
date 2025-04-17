@@ -62,19 +62,25 @@ CRGB leds[NUM_LEDS];
 
 #define sensor_pin D8
 
+#define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
+
 int laststate = LOW;
 int currentstate;
 int ledstate = LOW;
 
-// Voltage meter
-unsigned int raw=0;
-float volt=0.0;
-
+// Sound detection
+unsigned int soundValue = 0;
+unsigned int soundIntensity = 0;
+unsigned int lastSoundIntensity = 0;
+const int SOUND_THRESHOLD = 10;
+const float SMOOTHING_FACTOR = 0.2; // Smoothing factor for sound intensity (0.0-1.0)
+unsigned int soundPeak = 0;
+const unsigned long PEAK_DECAY = 50; // Peak decay rate in milliseconds
+unsigned long lastPeakTime = 0;
 // -------------------------------------------------------
 #define CANVAS_WIDTH    8
 #define CANVAS_HEIGHT   8
 #define CHIPSET         WS2811
-#define NUM_LEDS        (CANVAS_WIDTH * CANVAS_HEIGHT)
 GFXcanvas canvas(CANVAS_WIDTH, CANVAS_HEIGHT);
 
 // Define an array of colors
@@ -145,8 +151,6 @@ void setup() {
     server.send(200, "text/plain", "Landing page!");
   });
 
-  server.on("/voltage", handleVoltage);
-
   Serial.println("mDNS responder started");
   MDNS.addService("http", "tcp", 80);
   
@@ -185,7 +189,7 @@ void setup() {
   //-------------------------------
   pinMode(sensor_pin,INPUT);
 
-  // Voltage meter
+  // Sound detection sensor
   pinMode(A0, INPUT);
 }
 
@@ -196,7 +200,7 @@ SimplePatternList gPatterns = {
   rainbow, rainbowWithGlitter, confetti, sinelon, 
   juggle, bpm, fire, cylon, meteor, twinkle, 
   colorWaves, pulse, randomFlicker, sparkle,
-  matrixRain, ripple, expandingSquares 
+  matrixRain, ripple, expandingSquares, vuMeter 
 };
 
 
@@ -209,9 +213,24 @@ void loop() {
   MDNS.update();
   ElegantOTA.loop();
 
-  raw = analogRead(A0);
-  volt = raw / 1023.0 * 4.495;
-
+  // Read and process sound input with improved peak detection
+  soundValue = analogRead(A0);
+  int rawIntensity = map(soundValue, 0, 1023, 0, 255);
+  
+  // Update peak value
+  if (rawIntensity > soundPeak) {
+      soundPeak = rawIntensity;
+      lastPeakTime = millis();
+  } else if (millis() - lastPeakTime > PEAK_DECAY) {
+      if (soundPeak > 0) soundPeak--;
+  }
+  
+  // Combine current value with peak for more dynamic response
+  rawIntensity = max((unsigned int)rawIntensity, (soundPeak * 3) / 4);
+  
+  // Apply smoothing to prevent erratic pattern changes
+  soundIntensity = (SMOOTHING_FACTOR * rawIntensity) + ((1.0 - SMOOTHING_FACTOR) * lastSoundIntensity);
+  lastSoundIntensity = soundIntensity;
   int currentstate = digitalRead(sensor_pin);
 
   // Определяем начало нажатия
@@ -265,11 +284,33 @@ void loop() {
   if (ledstate) {
     if (!mode) {
       // В режиме эффектов обновляем анимации
+      // Select pattern based on sound intensity
+      if (soundIntensity > SOUND_THRESHOLD) {
+        // For louder sounds, choose more active patterns
+        if (soundIntensity > 200) {
+            gCurrentPatternNumber = ARRAY_SIZE(gPatterns) - 1; // vuMeter
+        } else if (soundIntensity > 150) {
+            gCurrentPatternNumber = 2; // confetti
+        } else if (soundIntensity > 100) {
+            gCurrentPatternNumber = 3; // sinelon
+        } else {
+            gCurrentPatternNumber = 9; // twinkle
+        }
+        
+        // Adjust brightness based on sound intensity and peak
+        int brightness = map(max(soundIntensity, soundPeak), 0, 255, 30, 255);
+        FastLED.setBrightness(brightness);
+      }
+      
       gPatterns[gCurrentPatternNumber]();
       FastLED.show();
       FastLED.delay(1000 / FRAMES_PER_SECOND);
       EVERY_N_MILLISECONDS(20) { gHue++; }
-      EVERY_N_SECONDS(10) { nextPattern(); }
+      
+      // Only auto-change patterns when there's no sound
+      if (soundIntensity <= SOUND_THRESHOLD) {
+        EVERY_N_SECONDS(10) { nextPattern(); }
+      }
     } else {
       // В режиме букв показываем букву
       canvas.fillScreen(CRGB::Black);
@@ -280,21 +321,12 @@ void loop() {
       FastLED.show();
     }
   }
-  showLowPowerIndicator();
 }
 
-void showLowPowerIndicator() {
-  if (volt < 3.0) {
-    leds[63] = CRGB::Red;
-    FastLED.show();
-  }
-}
 
 void turnOffLeds() {
   FastLED.clear(true);
 }
-
-#define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
 
 void nextPattern()
 {
@@ -547,6 +579,28 @@ void expandingSquares() {
   }
 }
 
+void vuMeter() {
+  // Create a VU meter effect based on sound intensity
+  fadeToBlackBy(leds, NUM_LEDS, 60);
+  
+  // Calculate how many LEDs should be lit based on sound intensity
+  int ledsToLight = map(soundIntensity, 0, 255, 0, NUM_LEDS);
+  
+  // Create gradient effect
+  for(int i = 0; i < ledsToLight; i++) {
+    if(i < NUM_LEDS/3) {
+      // Green for lower levels
+      leds[i] = CRGB::Green;
+    } else if(i < (NUM_LEDS * 2/3)) {
+      // Yellow for medium levels
+      leds[i] = CRGB::Yellow;
+    } else {
+      // Red for high levels
+      leds[i] = CRGB::Red;
+    }
+  }
+}
+
 // =================================================
 void onOTAStart() {
   // Log when OTA has started
@@ -572,9 +626,5 @@ void onOTAEnd(bool success) {
   // <Add your own code here>
 }
 
-void handleVoltage() {
-  String stringVoltage = String(volt, 3); // 3.141
-  server.send(200, "text/html", stringVoltage);
-}
 
 // --------------------------------------------------
